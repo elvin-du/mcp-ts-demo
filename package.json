@@ -1,5 +1,6 @@
 {
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^25.2.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
@@ -12,7 +13,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
     "start": "node --env-file=.env dist/host.js",
-    "dev": "node --env-file=.env src/host.ts"
+    "dev": "node --env-file=.env src/host.ts",
+    "server": "node --env-file=.env src/server.ts"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +22,7 @@
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "express": "^5.2.1",
     "openai": "^6.18.0",
     "zod": "^4.3.6"
   }

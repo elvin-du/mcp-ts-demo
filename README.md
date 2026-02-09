@@ -10,6 +10,18 @@
 2.  **Client (`src/client.ts`)**: MCP 客户端封装。负责建立与服务端的通信，并将 MCP 工具动态转换为 LLM 可理解的格式。
 3.  **Host (`src/host.ts`)**: 应用主机端。集成了 DeepSeek API，作为整个系统的“大脑”，自动决策何时调用 MCP 提供的工具。
 
+## 类型安全优化
+
+-   **强类型化 ([client.ts](file:///Users/elvindu/study/mcp-ts-demo/src/client.ts))**: 为 `getToolsForLlm` 引入了显式的 OpenAI 返回类型定义，增强了代码的自描述性和严谨性。
+-   **构建闭环 ([host.ts](file:///Users/elvindu/study/mcp-ts-demo/src/host.ts))**: 修复了访问 OpenAI 工具联合类型时的 TS 报错，确保了全栈 `npm run build` 的零错误输出。
+
+## 验证结论
+
+1.  **编译确认**: 运行 `npm run build` 成功。所有的弃用警告和类型报错均已彻底消除。
+2.  **连接确认**: 
+    -   采用最新规范定义的工具能够被顺畅调度。
+    -   类型提示在编辑器中已能完美工作。
+
 ## 准备工作
 
 *   **Node.js**: v18+
@@ -33,34 +45,38 @@ OPENAI_API_KEY=your_deepseek_api_key_here
 
 ### 3. 编译项目
 
-由于使用了 TypeScript，在运行前需要先编译为 JavaScript：
-
 ```bash
 npm run build
 ```
 
-### 4. 运行演示
+### 4. 运行演示 (HTTP 模式)
 
-运行 Host 端，程序将自动启动并连接 MCP Server，启动 DeepSeek 进行对话演练：
+在 HTTP 模式下，您需要启动两个独立的进程：
 
+**步骤 A: 启动 MCP Server**
+```bash
+npm run server
+```
+Server 将运行在 `http://localhost:3000`。
+
+**步骤 B: 启动 Host (另开一个终端)**
 ```bash
 npm start
 ```
 
 ## 开发脚本
 
-*   `npm run build`: 编译 TypeScript 代码到 `dist` 目录。
+*   `npm run server`: 直接运行 TS 形式的 Server (使用 `node --env-file`)。
 *   `npm start`: 运行编译后的 `dist/host.js`。
-*   `npm run dev`: 使用 `ts-node` 直接运行 `src/host.ts` (适合快速调试)。
+*   `npm run build`: 编译所有代码。
 
-## 它是如何工作的？
+## 它是如何工作的？ (HTTP/SSE 模式)
 
-1.  **Host** 启动并初始化 **Client**。
-2.  **Client** 通过 Stdio 启动 **Server** 进程并建立连接。
-3.  **Client** 获取 **Server** 提供的工具列表，并将其格式化为 OpenAI 的 `tools` 规范提供给 **Host**。
-4.  **Host** 将用户问题发送给 **DeepSeek**，并携带工具定义。
-5.  **DeepSeek** 决定调用 `add` 工具。
-6.  **Host** 通过 **Client** 调度该请求至 **Server**。
-7.  **Server** 计算结果并返回。
-8.  **DeepSeek** 拿到计算结果，生成最终的自然语言回复。
+1.  **Server** 启动一个 Express Web 服务器。
+2.  **Host** 连接到 `http://localhost:3000/sse` 开启 Server-Sent Events 流。
+3.  **Host** 通过 HTTP GET 获取工具列表。
+4.  **DeepSeek** 决定调用工具。
+5.  **Host** 将工具调用指令通过 **HTTP POST** 发送给 Server 的 `/messages` 接口。
+6.  **Server** 执行逻辑，通过 **SSE 通道** 将结果推送回 Host。
+7.  **Host** 获取结果并由 AI 完成回复。
 # mcp-ts-demo

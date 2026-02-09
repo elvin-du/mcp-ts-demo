@@ -1,45 +1,98 @@
-// 导入 MCP 服务端核心类：McpServer 用于构建高层 API 服务
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-// 导入标准 I/O 传输层：Stdio 是 MCP 最常用的通信方式（父子进程间通信）
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-// 导入 Zod 用于类型定义和运行时参数验证，MCP 强依赖它来保证工具调用的准确性
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import express from "express";
+import { randomUUID } from "node:crypto";
 
-// 初始化 McpServer 实例，这里定义的 name 和 version 会在连接握手时发送给客户端
+/**
+ * 现代 MCP HTTP 传输层：StreamableHTTPServerTransport
+ * 它是 SDK 推荐的最新方案，取代了已弃用的 SSEServerTransport。
+ */
+
+// 1. 初始化 MCP Server
 const server = new McpServer({
-    name: "MCP Demo Server", // 服务端名称，用于客户端识别
-    version: "1.0.0",        // 服务端版本号
+    name: "MCP Streamable HTTP Server",
+    version: "1.0.0",
 });
 
 /**
- * MCP 原理：工具（Tools）注册
- * 每一个工具都需要：1. 唯一的名称；2. 输入参数的 Schema（基于 Zod）；3. 具体的处理函数
- * 注册后，客户端通过 listTools() 发现，并通过 callTool() 触发执行
+ * add 函数的独立定义
+ * 将业务逻辑与 MCP 协议包装层分离，提高可维护性。
  */
-server.tool(
-    "add", // 工具名称，LLM 会根据此名称选择调用
+const add = (a: number, b: number): number => a + b;
+
+// 2. 注册工具 (使用最新的 registerTool API)
+server.registerTool(
+    "add",
     {
-        // 使用 Zod 定义输入参数的结构和描述。描述非常重要，因为它是给 LLM 看的“说明书”
-        num1: z.number().describe("第一个数字"), // 定义 num1 为数字类型并加描述
-        num2: z.number().describe("第二个数字"), // 定义 num2 为数字类型并加描述
+        description: "将两个数字相加",
+        inputSchema: {
+            num1: z.number().describe("第一个数字"),
+            num2: z.number().describe("第二个数字"),
+        }
     },
-    // 处理函数：当 AI 决定调用此工具时，MCP SDK 会自动验证输入并传入此异步函数
-    async ({ num1, num2 }) => {
+    async ({ num1, num2 }: { num1: number, num2: number }) => {
+        // 调用外部定义的 add 函数执行核心逻辑
+        const result = add(num1, num2);
         return {
-            // MCP 返回格式：必须包含 content 数组，通常为 text 或 image 类型
-            content: [{ type: "text", text: String(num1 + num2) }]
+            content: [{ type: "text", text: String(result) }]
         };
     }
 );
 
-// 创建 StdioServerTransport 实例，它会让当前进程通过 stdin/stdout 与客户端通信
-const transport = new StdioServerTransport();
+// 3. 创建 Express 应用并配置
+const app = express();
+// Streamable HTTP 通常需要处理 JSON Body，所以我们需要中间件
+app.use(express.json());
 
-/**
- * MCP 原理：连接与协议握手
- * server.connect 会启动协议状态机，等待客户端发起 'initialize' 请求并完成能力交换
- */
-server.connect(transport);
+// 初始化传输层实例
+const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID()
+});
 
-// 将日志输出到 stderr 而非 stdout，因为 stdout 是为 MCP 协议通信保留的通道
-console.error("MCP Server started on stdio");
+app.all("/mcp", async (req, res) => {
+    try {
+        await transport.handleRequest(req, res, req.body);
+    } catch (error) {
+        console.error("MCP Request Error:", error);
+        if (!res.headersSent) {
+            res.status(500).send("Internal Server Error");
+        }
+    }
+});
+
+// 全局错误处理，防止进程因未捕获错误意外退出
+process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled Rejection:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+    console.error("Uncaught Exception:", error);
+    process.exit(1);
+});
+
+const PORT = 3000;
+
+// 先建立 MCP 连接，成功后再启动 HTTP 监听
+server.connect(transport as any)
+    .then(() => {
+        console.log("MCP Server 已成功连接到传输层");
+
+        const instance = app.listen(PORT, "0.0.0.0", () => {
+            console.log(`MCP 现代 Server 正在稳定运行中...`);
+            console.log(`接入端点: http://localhost:${PORT}/mcp`);
+        });
+
+        instance.on("error", (err: any) => {
+            if (err.code === "EADDRINUSE") {
+                console.error(`错误：端口 ${PORT} 已被占用。请先关闭占用该端口的进程。`);
+            } else {
+                console.error("Express 监听出错:", err);
+            }
+            process.exit(1);
+        });
+    })
+    .catch(error => {
+        console.error("MCP Server 启动失败:", error);
+        process.exit(1);
+    });
